@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "crx-server.fullname" . }}
+  annotations:
+    kubernetes.io/ingress.class: "{{ .Values.ingress.class }}"
+    alb.ingress.kubernetes.io/group.name: "{{ .Values.ingress.groupName }}"
+    alb.ingress.kubernetes.io/scheme: "{{ .Values.ingress.scheme }}"
+    alb.ingress.kubernetes.io/target-type: "{{ .Values.ingress.targetType }}"
+    alb.ingress.kubernetes.io/listen-ports: '{{ .Values.ingress.listenPorts }}'  # Ensure it's a string
+    alb.ingress.kubernetes.io/security-groups: "{{ .Values.ingress.securityGroups }}"
+    alb.ingress.kubernetes.io/subnets: "{{ .Values.ingress.subnets }}"
+    alb.ingress.kubernetes.io/certificate-arn: "{{ .Values.ingress.certificateArn }}"
+spec:
+  ingressClassName: {{ .Values.ingress.class }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "crx-server.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}

@@ -1,0 +1,81 @@
+name: CRX Backend Deployment Workflow
+
+on:
+  push:
+    branches:
+      - "staging"  # Triggers only when code is merged into staging
+  workflow_dispatch:  # Allows manual trigger if needed
+
+jobs:
+  approval:
+    runs-on: ubuntu-latest
+    environment: staging  # Uses GitHub environment with manual approval enabled
+    steps:
+      - name: Await Manual Approval
+        run: echo "Deployment is waiting for approval."
+
+  deploy:
+    needs: approval  # Ensures approval is received before deploying
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.0'
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Set up EKS kubeconfig
+        run: aws eks update-kubeconfig --name CRX-DEV --region us-west-2
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get commit hash
+        id: get-commit-hash
+        run: echo "COMMIT_HASH=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Get timestamp
+        id: get-timestamp
+        run: echo "TIMESTAMP=$(date +'%Y-%m-%d-%H-%M')" >> $GITHUB_ENV
+
+      - name: Build, tag, and push the image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: server
+          IMAGE_TAG: staging-${{ env.COMMIT_HASH }}-${{ env.TIMESTAMP }}
+        run: |
+          docker system prune -a -f
+          docker build --no-cache -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Update Helm values.yaml with the latest image
+        run: |
+          IMAGE_TAG=staging-${{ env.COMMIT_HASH }}-${{ env.TIMESTAMP }}
+          FULL_IMAGE_NAME=${{ steps.login-ecr.outputs.registry }}/server
+          
+          sed -i "s|repository: .*|repository: ${FULL_IMAGE_NAME}|" crx-server/values.yaml
+          sed -i "s|tag: .*|tag: \"${IMAGE_TAG}\"|" crx-server/values.yaml
+
+      - name: Ensure namespace exists
+        run: kubectl create namespace crx-dev || true
+
+      - name: Deploy to EKS using Helm
+        run: |
+          helm upgrade --install crx-server crx-server \
+            --values crx-server/values.yaml \
+            --namespace crx-dev \
+            --timeout 600s || echo "Helm failed with exit code $?"

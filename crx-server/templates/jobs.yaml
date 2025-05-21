@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "crx-server.fullname" . }}-job-{{ randAlphaNum 5 | lower }}
+  labels:
+    {{- include "crx-server.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 0
+  completions: 1
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        {{- include "crx-server.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      restartPolicy: Never
+      containers:
+        - name: {{ .Chart.Name }}-job
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: Always
+          command: ['sh', 'migrate.sh']
+          env:
+            - name: AWS_REGION
+              value: "{{ .Values.environment.AWS_REGION }}"
+            - name: CRX_ENV
+              value: "{{ .Values.environment.CRX_ENV }}"
+            - name: CRX_ENV_FILE
+              value: "{{ .Values.environment.CRX_ENV_FILE }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

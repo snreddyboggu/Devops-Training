@@ -1,0 +1,55 @@
+FROM node:20-alpine AS builder
+RUN ln -s /usr/lib/libssl.so.3 /lib/libssl.so.3
+
+WORKDIR /app
+
+COPY package.json yarn.lock ./
+COPY prisma ./prisma/
+
+RUN yarn --frozen-lockfile
+
+COPY . .
+
+# prevent prisma fail on build (need to be set to correct db schema)
+ENV DATABASE_URL=postgresql://postgres
+
+RUN yarn build
+
+# install prod node_modules
+
+FROM node:20-alpine AS prod_modules
+RUN ln -s /usr/lib/libssl.so.3 /lib/libssl.so.3
+
+WORKDIR /app
+
+COPY package.json yarn.lock ./
+COPY prisma ./prisma/
+
+ENV NODE_ENV=production
+RUN yarn --prod --ignore-optional --frozen-lockfile
+
+# build prod image
+
+FROM node:20-alpine
+RUN ln -s /usr/lib/libssl.so.3 /lib/libssl.so.3
+
+WORKDIR /app
+
+COPY --from=prod_modules /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+
+ENV NODE_ENV=production
+COPY migrate.sh ./
+COPY seed.sh ./
+COPY seed-platform.sh ./
+COPY sync.sh ./
+COPY copy-tenant-admin-oauthservices.sh ./
+COPY sync-auth0-tenant-metadata.sh ./
+COPY sync-auth0-user-role.sh ./
+COPY sync-physicians.sh ./
+COPY provision-fax-numbers.sh ./
+
+EXPOSE $PORT
+ENTRYPOINT ["node", "--enable-source-maps"]
+CMD [ "dist/server" ]
